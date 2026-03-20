@@ -93,20 +93,25 @@ sh_binary(
 """
 
 _BUILD_OUTDATED = """
-sh_binary(
+java_binary(
     name = "outdated",
-    srcs = ["outdated.sh"],
+    main_class = "com.github.bazelbuild.rules_jvm_external.maven.Outdated",
     data = [
-        "@rules_jvm_external//private/tools/prebuilt:outdated_deploy.jar",
         "outdated.artifacts",
         "outdated.boms",
         "outdated.repositories",
     ],
     args = [
-        "$(location @rules_jvm_external//private/tools/prebuilt:outdated_deploy.jar)",
-        "$(location outdated.artifacts)",
-        "$(location outdated.boms)",
-        "$(location outdated.repositories)",
+        "--artifacts-file",
+        "$(rlocationpath :outdated.artifacts)",
+        "--boms-file",
+        "$(rlocationpath :outdated.boms)",
+        "--repositories-file",
+        "$(rlocationpath :outdated.repositories)",
+    ],
+    jvm_flags = {proxy_jvm_flags},
+    runtime_deps = [
+        "@rules_jvm_external//private/tools/java/com/github/bazelbuild/rules_jvm_external/maven:outdated_lib",
     ],
     visibility = ["//visibility:public"],
 )
@@ -461,16 +466,6 @@ def _add_outdated_files(repository_ctx, artifacts, boms, repositories):
         executable = False,
     )
 
-    repository_ctx.template(
-        "outdated.sh",
-        repository_ctx.attr._outdated,
-        {
-            "{repository_name}": repository_ctx.name,
-            "{proxy_opts}": " ".join([_shell_quote(arg) for arg in _get_java_proxy_args(repository_ctx)]),
-        },
-        executable = True,
-    )
-
 def get_direct_dependencies(all_artifacts, input_artifacts):
     """Returns the resolved coordinates for the given input (direct) artifacts.
 
@@ -814,6 +809,7 @@ def _pinned_coursier_fetch_impl(repository_ctx):
             imports = generated_imports,
             aar_import_statement = _get_aar_import_statement_or_empty_str(repository_ctx),
             unpinned_pin_target = unpinned_pin_target,
+            proxy_jvm_flags = repr(_get_java_proxy_args(repository_ctx)),
         ) + pin_target,
         executable = False,
     )
@@ -1516,6 +1512,7 @@ def _coursier_fetch_impl(repository_ctx):
             repository_name = repository_name,
             imports = generated_imports,
             aar_import_statement = _get_aar_import_statement_or_empty_str(repository_ctx),
+            proxy_jvm_flags = repr(_get_java_proxy_args(repository_ctx)),
         ),
         executable = False,
     )
@@ -1595,7 +1592,6 @@ def _coursier_fetch_impl(repository_ctx):
 pinned_coursier_fetch = repository_rule(
     attrs = {
         "_compat_repository": attr.label(default = "//private:compat_repository.bzl"),
-        "_outdated": attr.label(default = "//private:outdated.sh"),
         "user_provided_name": attr.string(),
         "resolver": attr.string(doc = "The resolver to use", values = ["coursier", "gradle", "maven"], default = "coursier"),
         "repositories": attr.string_list(),  # list of repository objects, each as json
@@ -1653,7 +1649,6 @@ coursier_fetch = repository_rule(
         "_lock_file_converter": attr.label(default = "//private/tools/prebuilt:lock_file_converter_deploy.jar"),
         "_pin": attr.label(default = "//private:pin.sh"),
         "_compat_repository": attr.label(default = "//private:compat_repository.bzl"),
-        "_outdated": attr.label(default = "//private:outdated.sh"),
         "user_provided_name": attr.string(),
         "repositories": attr.string_list(),  # list of repository objects, each as json
         "artifacts": attr.string_list(),  # list of artifact objects, each as json
