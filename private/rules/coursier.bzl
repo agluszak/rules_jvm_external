@@ -314,10 +314,10 @@ def _generate_java_jar_command_for_coursier(repository_ctx, jar_path):
         # https://github.com/coursier/coursier/blob/master/doc/FORMER-README.md#how-can-the-launcher-be-run-on-windows-or-manually-with-the-java-program
         # The -noverify option seems to be required after the proguarding step
         # of the main JAR of coursier.
-        cmd = [java_path, "-noverify", "-jar"] + coursier_opts + _get_java_proxy_args(repository_ctx) + [jar_path]
+        cmd = [java_path] + _get_java_network_preference_args(repository_ctx) + ["-noverify", "-jar"] + coursier_opts + _get_java_proxy_args(repository_ctx) + [jar_path]
     else:
         # Try to execute coursier directly
-        cmd = [jar_path] + coursier_opts + ["-J%s" % arg for arg in _get_java_proxy_args(repository_ctx)]
+        cmd = [jar_path] + coursier_opts + ["-J%s" % arg for arg in _get_java_network_preference_args(repository_ctx) + _get_java_proxy_args(repository_ctx)]
 
     return cmd
 
@@ -325,9 +325,9 @@ def _generate_java_jar_command(repository_ctx, jar_path):
     java_path = _java_path(repository_ctx)
 
     if java_path != None:
-        cmd = [java_path, "-jar"] + _get_java_proxy_args(repository_ctx) + [jar_path]
+        cmd = [java_path] + _get_java_network_preference_args(repository_ctx) + ["-jar"] + _get_java_proxy_args(repository_ctx) + [jar_path]
     else:
-        cmd = [jar_path] + ["-J%s" % arg for arg in _get_java_proxy_args(repository_ctx)]
+        cmd = [jar_path] + ["-J%s" % arg for arg in _get_java_network_preference_args(repository_ctx) + _get_java_proxy_args(repository_ctx)]
 
     return cmd
 
@@ -339,6 +339,23 @@ def _get_java_proxy_args(repository_ctx):
     https_proxy = repository_ctx.os.environ.get("https_proxy", repository_ctx.os.environ.get("HTTPS_PROXY"))
     no_proxy = repository_ctx.os.environ.get("no_proxy", repository_ctx.os.environ.get("NO_PROXY"))
     return get_java_proxy_args(http_proxy, https_proxy, no_proxy)
+
+def _get_java_network_preference_args(repository_ctx):
+    java_tool_options = repository_ctx.os.environ.get("JAVA_TOOL_OPTIONS", "")
+    jdk_java_options = repository_ctx.os.environ.get("JDK_JAVA_OPTIONS", "")
+    java_options = java_tool_options + " " + jdk_java_options
+
+    # Some CI environments inject IPv6 preference globally but don't have working IPv6 egress.
+    # Apply explicit JVM startup flags for repository-rule Java tooling only in that case.
+    if "-Djava.net.preferIPv6Addresses=true" not in java_options:
+        return []
+
+    flags = []
+    if "-Djava.net.preferIPv6Addresses=false" not in java_options:
+        flags.append("-Djava.net.preferIPv6Addresses=false")
+    if "-Djava.net.preferIPv4Stack=true" not in java_options:
+        flags.append("-Djava.net.preferIPv4Stack=true")
+    return flags
 
 def _windows_check(repository_ctx):
     # TODO(jin): Remove BAZEL_SH usage ASAP. Bazel is going bashless, so BAZEL_SH
@@ -1643,6 +1660,16 @@ pinned_coursier_fetch = repository_rule(
         # Use @@// to refer to the main repo with Bzlmod.
         "_workspace_label": attr.label(default = ("@@" if str(Label("//:invalid")).startswith("@@") else "@") + "//does/not:exist"),
     },
+    environ = [
+        "JAVA_TOOL_OPTIONS",
+        "JDK_JAVA_OPTIONS",
+        "http_proxy",
+        "HTTP_PROXY",
+        "https_proxy",
+        "HTTPS_PROXY",
+        "no_proxy",
+        "NO_PROXY",
+    ],
     implementation = _pinned_coursier_fetch_impl,
 )
 
@@ -1714,6 +1741,7 @@ coursier_fetch = repository_rule(
         ),
     },
     environ = [
+        "JAVA_TOOL_OPTIONS",
         "JAVA_HOME",
         "JDK_JAVA_OPTIONS",
         "http_proxy",
