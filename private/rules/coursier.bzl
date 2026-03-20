@@ -146,14 +146,8 @@ def _is_verbose(repository_ctx):
 def _is_windows(repository_ctx):
     return repository_ctx.os.name.find("windows") != -1
 
-def _is_linux(repository_ctx):
-    return repository_ctx.os.name.find("linux") != -1
-
 def _is_macos(repository_ctx):
     return repository_ctx.os.name.find("mac") != -1
-
-def _is_file(repository_ctx, path):
-    return repository_ctx.which("test") and repository_ctx.execute(["test", "-f", path]).return_code == 0
 
 def _is_directory(repository_ctx, path):
     return repository_ctx.which("test") and repository_ctx.execute(["test", "-d", path]).return_code == 0
@@ -285,23 +279,18 @@ def _get_aar_import_statement_or_empty_str(repository_ctx):
         return ""
 
 def _java_path(repository_ctx):
-    # Allow setting an env var to keep legacy JAVA_HOME behavior
-    use_java_home = repository_ctx.os.environ.get("RJE_COURSIER_USE_JAVA_HOME")
+    java_candidates = ["../bazel_tools/jdk/bin/java"]
+    if _is_windows(repository_ctx):
+        java_candidates = ["../bazel_tools/jdk/bin/java.exe"] + java_candidates
 
-    if use_java_home == None:
-        embedded_java = "../bazel_tools/jdk/bin/java"
-        if _is_file(repository_ctx, embedded_java):
-            return repository_ctx.path(embedded_java)
+    for java_candidate in java_candidates:
+        java_path = repository_ctx.path(java_candidate)
+        if java_path.exists:
+            return java_path
 
-    java_home = repository_ctx.os.environ.get("JAVA_HOME")
-    if java_home != None:
-        return repository_ctx.path(java_home + "/bin/java")
-    elif repository_ctx.which("java") != None:
-        return repository_ctx.which("java")
-    return None
+    fail("Unable to find embedded Java executable. Expected one of: %s" % ", ".join(java_candidates))
 
-# Generate the base `coursier` command depending on the OS, JAVA_HOME or the
-# location of `java`.
+# Generate the base `coursier` command using the embedded Java runtime.
 def _generate_java_jar_command_for_coursier(repository_ctx, jar_path):
     coursier_opts = repository_ctx.os.environ.get("COURSIER_OPTS", "")
     coursier_opts = coursier_opts.split(" ") if len(coursier_opts) > 0 else []
@@ -310,26 +299,15 @@ def _generate_java_jar_command_for_coursier(repository_ctx, jar_path):
     coursier_opts.append("-XX:+ExitOnOutOfMemoryError")
     java_path = _java_path(repository_ctx)
 
-    if java_path != None:
-        # https://github.com/coursier/coursier/blob/master/doc/FORMER-README.md#how-can-the-launcher-be-run-on-windows-or-manually-with-the-java-program
-        # The -noverify option seems to be required after the proguarding step
-        # of the main JAR of coursier.
-        cmd = [java_path, "-noverify", "-jar"] + coursier_opts + _get_java_proxy_args(repository_ctx) + [jar_path]
-    else:
-        # Try to execute coursier directly
-        cmd = [jar_path] + coursier_opts + ["-J%s" % arg for arg in _get_java_proxy_args(repository_ctx)]
-
-    return cmd
+    # https://github.com/coursier/coursier/blob/master/doc/FORMER-README.md#how-can-the-launcher-be-run-on-windows-or-manually-with-the-java-program
+    # The -noverify option seems to be required after the proguarding step
+    # of the main JAR of coursier.
+    return [java_path, "-noverify", "-jar"] + coursier_opts + _get_java_proxy_args(repository_ctx) + [jar_path]
 
 def _generate_java_jar_command(repository_ctx, jar_path):
     java_path = _java_path(repository_ctx)
 
-    if java_path != None:
-        cmd = [java_path, "-jar"] + _get_java_proxy_args(repository_ctx) + [jar_path]
-    else:
-        cmd = [jar_path] + ["-J%s" % arg for arg in _get_java_proxy_args(repository_ctx)]
-
-    return cmd
+    return [java_path, "-jar"] + _get_java_proxy_args(repository_ctx) + [jar_path]
 
 # Extract the well-known environment variables http_proxy, https_proxy and
 # no_proxy and convert them to java.net-compatible property arguments.
@@ -339,19 +317,6 @@ def _get_java_proxy_args(repository_ctx):
     https_proxy = repository_ctx.os.environ.get("https_proxy", repository_ctx.os.environ.get("HTTPS_PROXY"))
     no_proxy = repository_ctx.os.environ.get("no_proxy", repository_ctx.os.environ.get("NO_PROXY"))
     return get_java_proxy_args(http_proxy, https_proxy, no_proxy)
-
-def _windows_check(repository_ctx):
-    # TODO(jin): Remove BAZEL_SH usage ASAP. Bazel is going bashless, so BAZEL_SH
-    # will not be around for long.
-    #
-    # On Windows, run msys once to bootstrap it
-    # https://github.com/bazelbuild/rules_jvm_external/issues/53
-    if (_is_windows(repository_ctx)):
-        bash = repository_ctx.os.environ.get("BAZEL_SH")
-        if (bash == None):
-            fail("Please set the BAZEL_SH environment variable to the path of MSYS2 bash. " +
-                 "This is typically `c:\\msys64\\usr\\bin\\bash.exe`. For more information, read " +
-                 "https://docs.bazel.build/versions/master/install-windows.html#getting-bazel")
 
 def _stable_artifact(artifact):
     parsed = json.decode(artifact)
@@ -557,8 +522,6 @@ def _pinned_coursier_fetch_impl(repository_ctx):
     if not repository_ctx.attr.maven_install_json:
         fail("Please specify the file label to maven_install.json (e.g." +
              "//:maven_install.json).")
-
-    _windows_check(repository_ctx)
 
     repositories = [json.decode(repository) for repository in repository_ctx.attr.repositories]
 
@@ -1215,8 +1178,6 @@ def _coursier_fetch_impl(repository_ctx):
     )
     if hasher_exec_result.return_code != 0:
         fail("Unable to run coursier: " + hasher_exec_result.stderr)
-
-    _windows_check(repository_ctx)
 
     # Deserialize the spec blobs
     repositories = []
