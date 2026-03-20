@@ -152,6 +152,14 @@ def _is_linux(repository_ctx):
 def _is_macos(repository_ctx):
     return repository_ctx.os.name.find("mac") != -1
 
+def _home_dir(repository_ctx):
+    if _is_windows(repository_ctx):
+        return _normalize_to_unix_path(repository_ctx.os.environ.get("USERPROFILE", repository_ctx.os.environ.get("HOME", "")))
+    return repository_ctx.os.environ.get("HOME", "")
+
+def _path_exists(repository_ctx, path):
+    return repository_ctx.path(path).exists
+
 def _is_file(repository_ctx, path):
     return repository_ctx.which("test") and repository_ctx.execute(["test", "-f", path]).return_code == 0
 
@@ -428,16 +436,13 @@ def get_netrc_lines_from_entries(netrc_entries):
     return netrc_lines
 
 def get_home_netrc_contents(repository_ctx):
-    if repository_ctx.os.name.startswith("windows"):
-        home_dir = repository_ctx.os.environ.get("USERPROFILE", "")
-    else:
-        home_dir = repository_ctx.os.environ.get("HOME", "")
+    home_dir = _home_dir(repository_ctx)
 
     if not home_dir:
         return ""
 
     netrcfile = "{}/.netrc".format(home_dir)
-    if not repository_ctx.path(netrcfile).exists:
+    if not _path_exists(repository_ctx, netrcfile):
         return ""
 
     return repository_ctx.read(netrcfile)
@@ -729,13 +734,13 @@ def _pinned_coursier_fetch_impl(repository_ctx):
                 "        netrc = \"../%s/netrc\"," % (repository_ctx.name),
             ])
             if len(artifact["urls"]) == 0 and importer.has_m2local(maven_install_json_content) and artifact.get("file") != None:
-                if _is_windows(repository_ctx):
-                    user_home = repository_ctx.os.environ.get("USERPROFILE").replace("\\", "/")
+                user_home = _home_dir(repository_ctx)
+                if user_home:
+                    m2local_urls = [
+                        "file://%s/.m2/repository/%s" % (user_home, artifact["file"]),
+                    ]
                 else:
-                    user_home = repository_ctx.os.environ.get("HOME")
-                m2local_urls = [
-                    "file://%s/.m2/repository/%s" % (user_home, artifact["file"]),
-                ]
+                    m2local_urls = []
             else:
                 m2local_urls = []
             http_files.append("        urls = %s," % repr(
@@ -950,12 +955,17 @@ def get_coursier_cache_or_default(repository_ctx, use_unsafe_shared_cache):
         return coursier_cache_env_var
 
     # cache locations from https://get-coursier.io/docs/2.0.0-RC5-3/cache.html#default-location
-    # Use linux as the default cache directory
-    default_cache_dir = "%s/.cache/coursier/v1" % os_env.get("HOME")
+    # Use the XDG-style cache location as the cross-platform default.
+    home_dir = _home_dir(repository_ctx)
+    default_cache_dir = "%s/.cache/coursier/v1" % home_dir
     if _is_windows(repository_ctx):
-        default_cache_dir = "%s/Coursier/cache/v1" % os_env.get("LOCALAPPDATA").replace("\\", "/")
+        local_app_data = os_env.get("LOCALAPPDATA")
+        if local_app_data:
+            default_cache_dir = "%s/Coursier/cache/v1" % _normalize_to_unix_path(local_app_data)
+        elif home_dir:
+            default_cache_dir = "%s/AppData/Local/Coursier/cache/v1" % home_dir
     elif _is_macos(repository_ctx):
-        default_cache_dir = "%s/Library/Caches/Coursier/v1" % os_env.get("HOME")
+        default_cache_dir = "%s/Library/Caches/Coursier/v1" % home_dir
     else:
         # Coursier respects $XDG_CACHE_HOME as a replacement for $HOME/.cache
         # outside of Windows and macOS.
@@ -968,10 +978,12 @@ def get_coursier_cache_or_default(repository_ctx, use_unsafe_shared_cache):
             return "%s/coursier/v1" % xdg_cache_home
 
     # Logic based on # https://github.com/coursier/coursier/blob/f48c1c6b01ac5b720e66e06cf93587b21d030e8c/modules/paths/src/main/java/coursier/paths/CoursierPaths.java#L60
-    if _is_directory(repository_ctx, default_cache_dir):
+    if _path_exists(repository_ctx, default_cache_dir):
         return default_cache_dir
-    elif _is_directory(repository_ctx, "%s/.coursier" % os_env.get("HOME")):
-        return "%s/.coursier/cache/v1" % os_env.get("HOME")
+
+    legacy_cache_dir = "%s/.coursier" % home_dir
+    if _path_exists(repository_ctx, legacy_cache_dir):
+        return "%s/cache/v1" % legacy_cache_dir
 
     return default_cache_dir
 
