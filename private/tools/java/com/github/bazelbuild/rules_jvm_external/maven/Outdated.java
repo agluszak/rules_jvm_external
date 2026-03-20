@@ -27,6 +27,11 @@ public class Outdated {
   // and unfortunately ComparableVerison does not expose this in any public methods.
   private static final List<String> MAVEN_PRE_RELEASE_QUALIFIERS =
       Arrays.asList("alpha", "beta", "milestone", "cr", "rc", "snapshot");
+  private static final String PREFER_IPV6_ADDRESSES_TRUE =
+      "-Djava.net.preferIPv6Addresses=true";
+  private static final String PREFER_IPV6_ADDRESSES_FALSE =
+      "-Djava.net.preferIPv6Addresses=false";
+  private static final String PREFER_IPV4_STACK_TRUE = "-Djava.net.preferIPv4Stack=true";
 
   public static class ArtifactReleaseInfo {
     public String releaseVersion;
@@ -280,7 +285,59 @@ public class Outdated {
     }
   }
 
+  static boolean shouldApplyIpv4Fallback(String javaToolOptions, String jdkJavaOptions) {
+    String allOptions =
+        (javaToolOptions == null ? "" : javaToolOptions)
+            + " "
+            + (jdkJavaOptions == null ? "" : jdkJavaOptions);
+
+    return allOptions.contains(PREFER_IPV6_ADDRESSES_TRUE)
+        && !allOptions.contains(PREFER_IPV6_ADDRESSES_FALSE)
+        && !allOptions.contains(PREFER_IPV4_STACK_TRUE);
+  }
+
+  static boolean shouldRelaunchWithIpv4Fallback(
+      String javaToolOptions,
+      String jdkJavaOptions,
+      String preferIpv4StackProperty,
+      String preferIpv6AddressesProperty) {
+    if (!shouldApplyIpv4Fallback(javaToolOptions, jdkJavaOptions)) {
+      return false;
+    }
+
+    return !"true".equalsIgnoreCase(preferIpv4StackProperty)
+        && !"false".equalsIgnoreCase(preferIpv6AddressesProperty);
+  }
+
+  private static int relaunchWithIpv4Fallback(String[] args)
+      throws IOException, InterruptedException {
+    List<String> command = new java.util.ArrayList<>();
+    command.add(Paths.get(System.getProperty("java.home"), "bin", "java").toString());
+    command.add(PREFER_IPV6_ADDRESSES_FALSE);
+    command.add(PREFER_IPV4_STACK_TRUE);
+    command.add("-cp");
+    command.add(System.getProperty("java.class.path"));
+    command.add(Outdated.class.getName());
+    command.addAll(Arrays.asList(args));
+
+    Process process = new ProcessBuilder(command).inheritIO().start();
+    return process.waitFor();
+  }
+
   public static void main(String[] args) throws IOException {
+    if (shouldRelaunchWithIpv4Fallback(
+        System.getenv("JAVA_TOOL_OPTIONS"),
+        System.getenv("JDK_JAVA_OPTIONS"),
+        System.getProperty("java.net.preferIPv4Stack"),
+        System.getProperty("java.net.preferIPv6Addresses"))) {
+      try {
+        System.exit(relaunchWithIpv4Fallback(args));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted while relaunching outdated with IPv4 fallback", e);
+      }
+      return;
+    }
     verboseLog(String.format("Running outdated with args %s", Arrays.toString(args)));
 
     Path artifactsFilePath = null;

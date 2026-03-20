@@ -549,4 +549,49 @@ public class OutdatedTest {
         outdatedOutput.toString(), containsString("com.google.guava:guava [27.0-jre -> 33.0-jre]"));
     assertThat(outdatedOutput.toString(), not(containsString("No updates found")));
   }
+
+  @Test
+  public void shouldApplyIpv4FallbackWhenIpv6PreferenceIsInjectedViaEnvironment() {
+    assertThat(
+        Outdated.shouldApplyIpv4Fallback(
+            "-Djava.net.preferIPv6Addresses=true -Dfoo=bar", "-Dbaz=qux"),
+        is(true));
+  }
+
+  @Test
+  public void shouldNotApplyIpv4FallbackWhenIpv4StackAlreadyPreferred() {
+    assertThat(
+        Outdated.shouldApplyIpv4Fallback(
+            "-Djava.net.preferIPv6Addresses=true -Djava.net.preferIPv4Stack=true", ""),
+        is(false));
+  }
+
+  @Test
+  public void shouldNotApplyIpv4FallbackWhenIpv6PreferenceIsNotPresent() {
+    assertThat(Outdated.shouldApplyIpv4Fallback("-Dfoo=bar", "-Dbaz=qux"), is(false));
+  }
+
+  @Test
+  public void shouldRelaunchWithIpv4FallbackWhenEnvRequiresItAndPropertiesAreUnset() {
+    assertThat(
+        Outdated.shouldRelaunchWithIpv4Fallback(
+            "-Djava.net.preferIPv6Addresses=true", "", null, null),
+        is(true));
+  }
+
+  @Test
+  public void shouldNotRelaunchWhenIpv4StackIsAlreadyEnabled() {
+    assertThat(
+        Outdated.shouldRelaunchWithIpv4Fallback(
+            "-Djava.net.preferIPv6Addresses=true", "", "true", null),
+        is(false));
+  }
+
+  @Test
+  public void shouldNotRelaunchWhenIpv6IsAlreadyDisabled() {
+    assertThat(
+        Outdated.shouldRelaunchWithIpv4Fallback(
+            "-Djava.net.preferIPv6Addresses=true", "", null, "false"),
+        is(false));
+  }
 }
