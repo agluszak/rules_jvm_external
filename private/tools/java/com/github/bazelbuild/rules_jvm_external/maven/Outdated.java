@@ -1,11 +1,14 @@
 package com.github.bazelbuild.rules_jvm_external.maven;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
@@ -27,6 +30,8 @@ public class Outdated {
   // and unfortunately ComparableVerison does not expose this in any public methods.
   private static final List<String> MAVEN_PRE_RELEASE_QUALIFIERS =
       Arrays.asList("alpha", "beta", "milestone", "cr", "rc", "snapshot");
+  private static final String MAVEN_CENTRAL_ALIAS_HOST = "repo1.maven.org";
+  private static final String MAVEN_CENTRAL_CANONICAL_HOST = "repo.maven.apache.org";
 
   public static class ArtifactReleaseInfo {
     public String releaseVersion;
@@ -213,19 +218,24 @@ public class Outdated {
 
       ArtifactReleaseInfo artifactReleaseInfo = null;
       for (String repository : repositories) {
-        artifactReleaseInfo = getReleaseVersion(repository, groupId, artifactId);
+        for (String repositoryCandidate : repositoryCandidates(repository)) {
+          artifactReleaseInfo = getReleaseVersion(repositoryCandidate, groupId, artifactId);
 
+          if (artifactReleaseInfo != null) {
+            // We return the result from the first repository instead of searching all repositories
+            // for the artifact
+            verboseLog(
+                String.format(
+                    "Found release version [%s] and pre-release version [%s] for %s:%s in %s",
+                    artifactReleaseInfo.releaseVersion,
+                    artifactReleaseInfo.preReleaseVersion,
+                    groupId,
+                    artifactId,
+                    repositoryCandidate));
+            break;
+          }
+        }
         if (artifactReleaseInfo != null) {
-          // We return the result from the first repository instead of searching all repositories
-          // for the artifact
-          verboseLog(
-              String.format(
-                  "Found release version [%s] and pre-release version [%s] for %s:%s in %s",
-                  artifactReleaseInfo.releaseVersion,
-                  artifactReleaseInfo.preReleaseVersion,
-                  groupId,
-                  artifactId,
-                  repository));
           break;
         }
       }
@@ -278,6 +288,39 @@ public class Outdated {
     if (System.getenv("RJE_VERBOSE") != null) {
       System.out.println(logline);
     }
+  }
+
+  static List<String> repositoryCandidates(String repository) {
+    List<String> candidates = new ArrayList<>();
+    candidates.add(repository);
+
+    URI repositoryUri;
+    try {
+      repositoryUri = new URI(repository);
+    } catch (URISyntaxException e) {
+      return candidates;
+    }
+
+    if (!MAVEN_CENTRAL_ALIAS_HOST.equalsIgnoreCase(repositoryUri.getHost())) {
+      return candidates;
+    }
+
+    try {
+      URI canonicalUri =
+          new URI(
+              repositoryUri.getScheme(),
+              repositoryUri.getUserInfo(),
+              MAVEN_CENTRAL_CANONICAL_HOST,
+              repositoryUri.getPort(),
+              repositoryUri.getPath(),
+              repositoryUri.getQuery(),
+              repositoryUri.getFragment());
+      candidates.add(canonicalUri.toString());
+    } catch (URISyntaxException e) {
+      // Keep the original repository only if canonical URI construction fails.
+    }
+
+    return candidates;
   }
 
   public static void main(String[] args) throws IOException {

@@ -549,4 +549,21 @@ public class OutdatedTest {
         outdatedOutput.toString(), containsString("com.google.guava:guava [27.0-jre -> 33.0-jre]"));
     assertThat(outdatedOutput.toString(), not(containsString("No updates found")));
   }
+
+  @Test
+  public void shouldAddCanonicalMavenCentralAsRepositoryCandidate() {
+    assertThat(
+        Outdated.repositoryCandidates("https://repo1.maven.org/maven2"),
+        is(
+            equalTo(
+                Arrays.asList(
+                    "https://repo1.maven.org/maven2", "https://repo.maven.apache.org/maven2"))));
+  }
+
+  @Test
+  public void shouldNotAddRepositoryCandidatesForNonMavenCentralMirrors() {
+    assertThat(
+        Outdated.repositoryCandidates("https://maven.google.com"),
+        is(equalTo(Arrays.asList("https://maven.google.com"))));
+  }
 }
