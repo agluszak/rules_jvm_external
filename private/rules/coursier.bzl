@@ -85,9 +85,18 @@ sh_binary(
 """
 
 _BUILD_DIRECT_DEPS = """
-sh_binary(
+java_binary(
     name = "direct_deps",
-    srcs = ["direct_deps.sh"],
+    main_class = "com.github.bazelbuild.rules_jvm_external.coursier.PrintFile",
+    args = [
+        "$(rlocationpath :direct_deps.txt)",
+    ],
+    data = [
+        ":direct_deps.txt",
+    ],
+    runtime_deps = [
+        "@rules_jvm_external//private/tools/java/com/github/bazelbuild/rules_jvm_external/coursier:PrintFile",
+    ],
     visibility = ["//visibility:public"],
 )
 """
@@ -522,20 +531,16 @@ def get_direct_dependencies(all_artifacts, input_artifacts):
     return sorted(direct_deps.keys())
 
 def _add_direct_deps_files(repository_ctx, direct_deps):
-    """Creates the direct_deps.sh script file.
+    """Creates the direct_deps.txt file.
 
     Args:
         repository_ctx: The repository context.
         direct_deps: A list of resolved coordinates in Gradle External format.
     """
-    script_content = "#!/bin/bash\n"
-    for dep in direct_deps:
-        script_content += "echo '%s'\n" % dep
-
     repository_ctx.file(
-        "direct_deps.sh",
-        script_content,
-        executable = True,
+        "direct_deps.txt",
+        "\n".join(direct_deps) + "\n",
+        executable = False,
     )
 
 def is_repin_required(repository_ctx):
